@@ -1,7 +1,7 @@
 package mapreduce
 
 import "fmt"
-
+import "sync"
 //
 // schedule() starts and waits for all tasks in the given phase (Map
 // or Reduce). the mapFiles argument holds the names of the files that
@@ -22,9 +22,7 @@ func schedule(jobName string, mapFiles []string, nReduce int, phase jobPhase, re
 		ntasks = nReduce
 		n_other = len(mapFiles)
 	}
-
-	fmt.Printf("Schedule: %v %v tasks (%d I/Os)\n", ntasks, phase, n_other)
-
+//	fmt.Printf("Schedule: %v %v tasks (%d I/Os)\n", ntasks, phase, n_other)
 	// All ntasks tasks have to be scheduled on workers, and only once all of
 	// them have been completed successfully should the function return.
 	// Remember that workers may fail, and that any given worker may finish
@@ -55,16 +53,32 @@ func schedule(jobName string, mapFiles []string, nReduce int, phase jobPhase, re
    */// }}}
    switch phase{
    case mapPhase:
+      var wg sync.WaitGroup
+      wg.Add(ntasks)
       for taskNum, mapFileName := range mapFiles{
          taskArg := DoTaskArgs{jobName, mapFileName, mapPhase, taskNum, n_other}
-         call(<-registerChan, "Worker.DoTask", taskArg, nil)
+         worker := <-registerChan
+         go func(taskArg DoTaskArgs, registerChan chan string, taskNum int, worker string){
+            call(worker, "Worker.DoTask", taskArg, nil)
+            registerChan <- worker
+            fmt.Println(worker)
+            wg.Done()
+         }(taskArg, registerChan, taskNum, worker)
       }
+      wg.Wait()
    case reducePhase:
+      var wg sync.WaitGroup
       for taskNum:=0 ; taskNum < ntasks; taskNum++{
+         wg.Add(1)
          taskArg := DoTaskArgs{jobName, "", reducePhase, taskNum, n_other}
-         call(<-registerChan, "Worker.DoTask", taskArg, nil)
+         go func(taskArg DoTaskArgs, registerChan chan string){
+            worker := <-registerChan
+            call(worker, "Worker.DoTask", taskArg, nil)
+            registerChan <- worker
+            wg.Done()
+         }(taskArg, registerChan)
       }
+      wg.Wait()
    }
-   fmt.Printf("Schedule: %v phase done\n", phase)
+//   fmt.Printf("Schedule: %v phase done\n", phase)
 }
-
