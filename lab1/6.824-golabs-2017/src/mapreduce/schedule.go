@@ -22,7 +22,7 @@ func schedule(jobName string, mapFiles []string, nReduce int, phase jobPhase, re
 		ntasks = nReduce
 		n_other = len(mapFiles)
 	}
-//	fmt.Printf("Schedule: %v %v tasks (%d I/Os)\n", ntasks, phase, n_other)
+	fmt.Printf("Schedule: %v %v tasks (%d I/Os)\n", ntasks, phase, n_other)
 	// All ntasks tasks have to be scheduled on workers, and only once all of
 	// them have been completed successfully should the function return.
 	// Remember that workers may fail, and that any given worker may finish
@@ -57,28 +57,37 @@ func schedule(jobName string, mapFiles []string, nReduce int, phase jobPhase, re
       wg.Add(ntasks)
       for taskNum, mapFileName := range mapFiles{
          taskArg := DoTaskArgs{jobName, mapFileName, mapPhase, taskNum, n_other}
-         worker := <-registerChan
-         go func(taskArg DoTaskArgs, registerChan chan string, taskNum int, worker string){
-            call(worker, "Worker.DoTask", taskArg, nil)
-            registerChan <- worker
-            fmt.Println(worker)
+         go func(taskArg DoTaskArgs, registerChan chan string){
+            var successful bool = false
+            for ; !successful; {
+               worker := <-registerChan
+               successful = call(worker, "Worker.DoTask", taskArg, nil)
+               if successful{   //if failure, abandon this worker
+                  registerChan <- worker
+               }
+            }
             wg.Done()
-         }(taskArg, registerChan, taskNum, worker)
+         }(taskArg, registerChan)
       }
       wg.Wait()
    case reducePhase:
       var wg sync.WaitGroup
+      wg.Add(ntasks)
       for taskNum:=0 ; taskNum < ntasks; taskNum++{
-         wg.Add(1)
          taskArg := DoTaskArgs{jobName, "", reducePhase, taskNum, n_other}
          go func(taskArg DoTaskArgs, registerChan chan string){
-            worker := <-registerChan
-            call(worker, "Worker.DoTask", taskArg, nil)
-            registerChan <- worker
+            var successful bool = false
+            for ; !successful; {
+               worker := <-registerChan
+               successful = call(worker, "Worker.DoTask", taskArg, nil)
+               if successful{   //if failure, abandon this worker
+                  registerChan <- worker
+               }
+            }
             wg.Done()
          }(taskArg, registerChan)
       }
       wg.Wait()
    }
-//   fmt.Printf("Schedule: %v phase done\n", phase)
+   fmt.Printf("Schedule: %v phase done\n", phase)
 }

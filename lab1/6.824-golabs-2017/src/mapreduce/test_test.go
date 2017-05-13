@@ -180,6 +180,7 @@ func TestOneFailure(t *testing.T) {
 	mr.Wait()
 	check(t, mr.files)
 	checkWorker(t, mr.stats)
+   fmt.Println("One Failure test pass!")
 	cleanup(mr)
 }
 
