@@ -42,7 +42,7 @@ func doMap(
 	//
    dat, err := ioutil.ReadFile(inFile)
    checkErr(err)
-   keyValSet := mapF(jobName, string(dat))
+   keyValSet := mapF(inFile, string(dat))
 	// Look at Go's ioutil and os packages for functions to read
 	// and write files.
 	//
