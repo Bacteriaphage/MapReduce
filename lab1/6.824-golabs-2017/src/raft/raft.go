@@ -40,6 +40,11 @@ type ApplyMsg struct {
 //
 // A Go object implementing a single Raft peer.
 //
+type Log sturct{
+    index   int
+    content []byte
+}
+
 type Raft struct {
 	mu        sync.Mutex          // Lock to protect shared access to this peer's state
 	peers     []*labrpc.ClientEnd // RPC end points of all peers
@@ -49,7 +54,15 @@ type Raft struct {
 	// Your data here (2A, 2B, 2C).
 	// Look at the paper's Figure 2 for a description of what
 	// state a Raft server must maintain.
-
+    currentTerm int               // last term server has seen 
+    votedFor    int               // candidateId that received vote in current term
+    // Volatile state on all servers:
+    commitIndex int               // index of highest log entry known to be committed
+    lastApplied int               // index of highest log entry applied to state machine
+    // Volatile state on leaders:
+    nextIndex   []int             // for each server, index of the next log entry to send
+    matchIndex  []int             // for each server, index of highest log entry known to be
+                                  // replicated on server
 }
 
 // return currentTerm and whether this server
@@ -59,6 +72,8 @@ func (rf *Raft) GetState() (int, bool) {
 	var term int
 	var isleader bool
 	// Your code here (2A).
+    term = *rf.currentTerm
+    isleader = (*rf.votedFor==*rf.me)
 	return term, isleader
 }
 
@@ -102,6 +117,12 @@ func (rf *Raft) readPersist(data []byte) {
 //
 type RequestVoteArgs struct {
 	// Your data here (2A, 2B).
+    Term            int             // leader`s term
+    LeaderId        int             // follower can redirect clients
+    PrevLogIndex    int             // index of log entry immidiately preceding new one
+    PrevLogTerm     int             // term of prevLogIndex entry
+    LeaderCommit    int             // leader`s commitIndex
+    Entries         []byte          // log entries to store
 }
 
 //
@@ -110,6 +131,9 @@ type RequestVoteArgs struct {
 //
 type RequestVoteReply struct {
 	// Your data here (2A).
+    Term            int             // currentTerm, for leader to update itself
+    success         bool            // true if follower contained entry matching prevLogIndex and
+                                    // prevLogTerm
 }
 
 //
