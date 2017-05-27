@@ -54,14 +54,14 @@ type Raft struct {
 	// Your data here (2A, 2B, 2C).
 	// Look at the paper's Figure 2 for a description of what
 	// state a Raft server must maintain.
-    currentTerm int               // last term server has seen 
-    votedFor    int               // candidateId that received vote in current term
-    // Volatile state on all servers:
-    commitIndex int               // index of highest log entry known to be committed
-    lastApplied int               // index of highest log entry applied to state machine
-    // Volatile state on leaders:
-    nextIndex   []int             // for each server, index of the next log entry to send
-    matchIndex  []int             // for each server, index of highest log entry known to be
+   currentTerm int               // last term server has seen 
+   votedFor    int               // candidateId that received vote in current term
+   // Volatile state on all servers:
+   commitIndex int               // index of highest log entry known to be committed
+   lastApplied int               // index of highest log entry applied to state machine
+   // Volatile state on leaders:
+   nextIndex   []int             // for each server, index of the next log entry to send
+   matchIndex  []int             // for each server, index of highest log entry known to be
                                   // replicated on server
 }
 
@@ -72,8 +72,8 @@ func (rf *Raft) GetState() (int, bool) {
 	var term int
 	var isleader bool
 	// Your code here (2A).
-    term = *rf.currentTerm
-    isleader = (*rf.votedFor==*rf.me)
+   term = *rf.currentTerm
+   isleader = (*rf.votedFor==*rf.me)
 	return term, isleader
 }
 
@@ -117,12 +117,10 @@ func (rf *Raft) readPersist(data []byte) {
 //
 type RequestVoteArgs struct {
 	// Your data here (2A, 2B).
-    Term            int             // leader`s term
-    LeaderId        int             // follower can redirect clients
-    PrevLogIndex    int             // index of log entry immidiately preceding new one
-    PrevLogTerm     int             // term of prevLogIndex entry
-    LeaderCommit    int             // leader`s commitIndex
-    Entries         []byte          // log entries to store
+   Term           int               // candidate`s term
+   CandidateId    int               // candidate requesting vote
+   LastLogIndex   int               // index of candidate`s last log entry
+   LastLogTerm    int               // term of candidate`s last log entry
 }
 
 //
@@ -131,9 +129,8 @@ type RequestVoteArgs struct {
 //
 type RequestVoteReply struct {
 	// Your data here (2A).
-    Term            int             // currentTerm, for leader to update itself
-    success         bool            // true if follower contained entry matching prevLogIndex and
-                                    // prevLogTerm
+   Term            int             // currentTerm, for candidate to update itself
+   voteGranted     bool            // true means candidate received vote
 }
 
 //
@@ -141,6 +138,14 @@ type RequestVoteReply struct {
 //
 func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	// Your code here (2A, 2B).
+   *reply.term = *rf.currentTerm
+   if *rf.currentTerm <= *args.Term && (*rf.votedFor == 0 || *rf.votedFor == *args.CandidateId)
+      && *args.LastLogIndex == len(*rf.log)
+   {
+      *reply.voteGranted = true;
+   } else{
+      *reply.voteGranted = false;
+   }
 }
 
 //
@@ -231,6 +236,10 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	rf.me = me
 
 	// Your initialization code here (2A, 2B, 2C).
+   rf.currentTerm = 0;
+   rf.votedFor = 0;
+   rf.commitIndex = 0;
+   rf.lastApplied = 0;
 
 	// initialize from state persisted before a crash
 	rf.readPersist(persister.ReadRaftState())
