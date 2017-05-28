@@ -19,6 +19,8 @@ package raft
 
 import "sync"
 import "labrpc"
+import "math/rand"
+import "time"
 
 // import "bytes"
 // import "encoding/gob"
@@ -40,7 +42,7 @@ type ApplyMsg struct {
 //
 // A Go object implementing a single Raft peer.
 //
-type Log sturct{
+type Log struct{
     index   int
     content []byte
 }
@@ -64,7 +66,7 @@ type Raft struct {
    matchIndex  []int             // for each server, index of highest log entry known to be
                                   // replicated on server
 }
-
+// {{{
 // return currentTerm and whether this server
 // believes it is the leader.
 func (rf *Raft) GetState() (int, bool) {
@@ -72,8 +74,8 @@ func (rf *Raft) GetState() (int, bool) {
 	var term int
 	var isleader bool
 	// Your code here (2A).
-   term = *rf.currentTerm
-   isleader = (*rf.votedFor==*rf.me)
+   term = rf.currentTerm
+   isleader = (rf.votedFor==rf.me)
 	return term, isleader
 }
 
@@ -107,7 +109,7 @@ func (rf *Raft) readPersist(data []byte) {
 		return
 	}
 }
-
+// }}}
 
 
 
@@ -123,14 +125,13 @@ type RequestVoteArgs struct {
    LastLogTerm    int               // term of candidate`s last log entry
 }
 
-//
 // example RequestVote RPC reply structure.
 // field names must start with capital letters!
 //
 type RequestVoteReply struct {
 	// Your data here (2A).
    Term            int             // currentTerm, for candidate to update itself
-   voteGranted     bool            // true means candidate received vote
+   VoteGranted     bool            // true means candidate received vote
 }
 
 //
@@ -138,13 +139,17 @@ type RequestVoteReply struct {
 //
 func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	// Your code here (2A, 2B).
-   *reply.term = *rf.currentTerm
-   if *rf.currentTerm <= *args.Term && (*rf.votedFor == 0 || *rf.votedFor == *args.CandidateId)
-      && *args.LastLogIndex == len(*rf.log)
-   {
-      *reply.voteGranted = true;
+   // this raft node`s term is greater than the candidate
+   if args.Term < rf.currentTerm{
+      reply.Term = rf.currentTerm
+      reply.VoteGranted = false
+   } else if (rf.votedFor == 0 || rf.votedFor == args.CandidateId) && rf.commitIndex == args.LastLogIndex{
+      rf.votedFor = args.CandidateId
+      rf.currentTerm = args.Term
+      reply.Term = args.Term
+      reply.VoteGranted = true
    } else{
-      *reply.voteGranted = false;
+      reply.VoteGranted = false
    }
 }
 
@@ -177,12 +182,48 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 // that the caller passes the address of the reply struct with &, not
 // the struct itself.
 //
-func (rf *Raft) sendRequestVote(server int, args *RequestVoteArgs, reply *RequestVoteReply) bool {
-	ok := rf.peers[server].Call("Raft.RequestVote", args, reply)
-	return ok
+func (rf *Raft) sendRequestVote(server int, args *RequestVoteArgs, reply *RequestVoteReply){
+   lastTerm := rf.currentTerm
+   //totalMember := len(rf.peers)
+   rand.Seed(int64(server))
+   //for ;; {
+      // set random range from 200ms-350ms
+      // some confuse:
+      // paper chose 150ms-300ms for a up to 150ms heartbeat, 
+      // test allow more slow heartbeat from 100ms to another value;
+      time.Sleep(time.Duration(rand.Intn(150) + 200) * time.Millisecond)
+      if lastTerm == rf.currentTerm{
+         rf.currentTerm += 1
+         rf.votedFor = rf.me
+         args.Term = rf.currentTerm
+         args.CandidateId = rf.me
+         numberOfVote := 0
+         for i := 0; i < len(rf.peers); i++{
+            if i == server{
+               continue;
+            }
+            rf.peers[i].Call("Raft.RequestVote", args, reply)
+            if reply.VoteGranted == false{
+               // other raft`s term larger than this, this cannot be voted
+               if reply.Term > rf.currentTerm{
+                  rf.currentTerm = reply.Term
+                  continue;
+               }
+            } else{
+               numberOfVote++
+            }
+         }
+//         if numberOfVote >= (totalMember/2){
+//            for i := 0; i < totalMember; i++{
+//               rf.peers[i].currentTerm = rf.currentTerm
+//            }
+//         }
+      }
+      lastTerm = rf.currentTerm
+   //}
 }
 
-
+// {{{
 //
 // the service using Raft (e.g. a k/v server) wants to start
 // agreement on the next command to be appended to Raft's log. if this
@@ -227,7 +268,7 @@ func (rf *Raft) Kill() {
 // tester or service expects Raft to send ApplyMsg messages.
 // Make() must return quickly, so it should start goroutines
 // for any long-running work.
-//
+//// }}}
 func Make(peers []*labrpc.ClientEnd, me int,
 	persister *Persister, applyCh chan ApplyMsg) *Raft {
 	rf := &Raft{}
@@ -236,14 +277,19 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	rf.me = me
 
 	// Your initialization code here (2A, 2B, 2C).
-   rf.currentTerm = 0;
-   rf.votedFor = 0;
-   rf.commitIndex = 0;
-   rf.lastApplied = 0;
-
+   rf.currentTerm = 0
+   rf.votedFor = 0
+   rf.commitIndex = 0
+   rf.lastApplied = 0
 	// initialize from state persisted before a crash
 	rf.readPersist(persister.ReadRaftState())
+   // each term of a raft node has different time spans, 
+   // that mean we need count random time down in func sendVoteRequest
 
+   // initialize first requestVoteArgs and requestVoteReply structure
+   args := &RequestVoteArgs{rf.currentTerm, rf.me, 0, 0}
+   reply := &RequestVoteReply{rf.currentTerm, false}
+   go rf.sendRequestVote(rf.me, args, reply)
 
 	return rf
 }
