@@ -111,7 +111,28 @@ func (rf *Raft) readPersist(data []byte) {
 }
 // }}}
 
+//
+// AppendEntrues RPC arguments structure.
+// field names must start with capital letters!
+//
+type AppendEntriesArgs struct{
+   Term           int               // leader`s term
+   LeaderId       int               // follower can redirect clients
+   PrevLogIndex   int               // index of log entry immediately preceding new ones
+   PrevLogTerm    int               // term of prevLogIndex
+   Entries        []byte            // log entries to store
+   LeaderCommit   int               // leader`s commitIndex
+}
 
+//
+// AppendEntries RPC reply structure
+// fiesld names must start with capital letters!
+//
+type AppendEntriesReply struct{
+   Term           int               // currentTerm, for leader to update itself
+   success        bool              // true if follower contained entry matching 
+                                    // prevLogIndex and prevLogTerm
+}
 
 //
 // example RequestVote RPC arguments structure.
@@ -132,6 +153,12 @@ type RequestVoteReply struct {
 	// Your data here (2A).
    Term            int             // currentTerm, for candidate to update itself
    VoteGranted     bool            // true means candidate received vote
+}
+
+// AppendEnteries RPC handler
+
+func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply){
+    
 }
 
 //
@@ -186,13 +213,13 @@ func (rf *Raft) sendRequestVote(server int, args *RequestVoteArgs, reply *Reques
    lastTerm := rf.currentTerm
    //totalMember := len(rf.peers)
    rand.Seed(int64(server))
-   //for ;; {
+   for ;; {
       // set random range from 200ms-350ms
       // some confuse:
       // paper chose 150ms-300ms for a up to 150ms heartbeat, 
       // test allow more slow heartbeat from 100ms to another value;
       time.Sleep(time.Duration(rand.Intn(150) + 200) * time.Millisecond)
-      if lastTerm == rf.currentTerm{
+      if lastTerm == rf.currentTerm && rf.votedFor != rf.me{
          rf.currentTerm += 1
          rf.votedFor = rf.me
          args.Term = rf.currentTerm
@@ -220,7 +247,7 @@ func (rf *Raft) sendRequestVote(server int, args *RequestVoteArgs, reply *Reques
 //         }
       }
       lastTerm = rf.currentTerm
-   //}
+   }
 }
 
 // {{{
@@ -293,3 +320,33 @@ func Make(peers []*labrpc.ClientEnd, me int,
 
 	return rf
 }
+
+//After system has a leader, every server`s commitIndex should be same in a valid 
+//timeout span. Otherwise, the first timeout server will start a new leader election.
+//
+//First we call a function with two state, one is leader election, the other is
+//headtbeat(AppendEntries), after we have a leader, the leader will fill a shared mem
+//with heartbeat signal periodically, other followers should listen to their location.
+//Once there is no signal within timeout, the follower became a candidate and start
+//a new election.
+//
+//psudocode:
+//for ;;{
+//    vote progress:
+//    ...
+//    append process:
+//    if rf.votedFor != rf.me{
+//        for ;;{ 
+//            time.Sleep(timeout)
+//            if shared_mem[rf.me] != true{
+//                break
+//        }
+//    } else{
+//        for ;;{
+//            time.Sleep(fixed time){
+//                for i:=0; i < len(rf.peers); i++{
+//                    write signal into shared_mem
+//                }
+//            }
+//        }
+//    }
