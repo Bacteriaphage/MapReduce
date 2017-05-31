@@ -21,6 +21,7 @@ import "sync"
 import "labrpc"
 import "math/rand"
 import "time"
+import "fmt"
 
 // import "bytes"
 // import "encoding/gob"
@@ -120,7 +121,7 @@ type AppendEntriesArgs struct{
    LeaderId       int               // follower can redirect clients
    PrevLogIndex   int               // index of log entry immediately preceding new ones
    PrevLogTerm    int               // term of prevLogIndex
-   Entries        []byte            // log entries to store
+   // Entries        *Persister        // log entries to store
    LeaderCommit   int               // leader`s commitIndex
 }
 
@@ -130,7 +131,7 @@ type AppendEntriesArgs struct{
 //
 type AppendEntriesReply struct{
    Term           int               // currentTerm, for leader to update itself
-   success        bool              // true if follower contained entry matching 
+   Success        bool              // true if follower contained entry matching 
                                     // prevLogIndex and prevLogTerm
 }
 
@@ -158,7 +159,21 @@ type RequestVoteReply struct {
 // AppendEnteries RPC handler
 
 func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply){
-    
+//   fmt.Printf("remote call server %d\n", rf.me)
+   if args.Term < rf.currentTerm{
+      reply.Success = false
+      reply.Term = rf.currentTerm
+      fmt.Printf("Term of server %d not match\n", rf.me)
+//   } else if args.PrevLogIndex != rf.commitIndex{
+//      reply.Success = false
+//      reply.Term = args.Term
+//      fmt.Printf("Log Index of server %d not match\n", rf.me)
+   } else{
+      reply.Success = true
+      reply.Term = args.Term
+      rf.commitIndex = args.LeaderCommit
+//      fmt.Printf("server%d update log, new log index is %d\n", rf.me, rf.commitIndex)
+   }
 }
 
 //
@@ -167,10 +182,11 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	// Your code here (2A, 2B).
    // this raft node`s term is greater than the candidate
-   if args.Term < rf.currentTerm{
+   if args.Term <= rf.currentTerm{
       reply.Term = rf.currentTerm
       reply.VoteGranted = false
-   } else if (rf.votedFor == 0 || rf.votedFor == args.CandidateId) && rf.commitIndex == args.LastLogIndex{
+   } else if rf.currentTerm < args.Term /*&& rf.commitIndex == args.LastLogIndex*/{
+      fmt.Printf("server %d voted for server %d\n", rf.me, args.CandidateId)
       rf.votedFor = args.CandidateId
       rf.currentTerm = args.Term
       reply.Term = args.Term
@@ -214,39 +230,104 @@ func (rf *Raft) sendRequestVote(server int, args *RequestVoteArgs, reply *Reques
    //totalMember := len(rf.peers)
    rand.Seed(int64(server))
    for ;; {
+      // vote progress
       // set random range from 200ms-350ms
       // some confuse:
       // paper chose 150ms-300ms for a up to 150ms heartbeat, 
       // test allow more slow heartbeat from 100ms to another value;
-      time.Sleep(time.Duration(rand.Intn(150) + 200) * time.Millisecond)
-      if lastTerm == rf.currentTerm && rf.votedFor != rf.me{
+      voteSpan := rand.Intn(150) + 200
+      hasLeader := false
+      fmt.Printf("server %d becomes candidate\n", rf.me)
+      for i:= 0; i < voteSpan; i+=1{
+         time.Sleep(time.Millisecond)
+         if lastTerm != rf.currentTerm{
+            hasLeader = true
+            break;
+         }
+      }
+      fmt.Printf("server %d has leader %v\n", rf.me, hasLeader)
+      if !hasLeader && lastTerm == rf.currentTerm && rf.votedFor != rf.me{
+         fmt.Printf("server %d apply for leader\n", rf.me)
          rf.currentTerm += 1
-         rf.votedFor = rf.me
          args.Term = rf.currentTerm
          args.CandidateId = rf.me
          numberOfVote := 0
+         availableServer := 0
          for i := 0; i < len(rf.peers); i++{
             if i == server{
-               continue;
+               continue
             }
-            rf.peers[i].Call("Raft.RequestVote", args, reply)
+            if rf.peers[i].Call("Raft.RequestVote", args, reply){
+               availableServer++
+            }
             if reply.VoteGranted == false{
                // other raft`s term larger than this, this cannot be voted
                if reply.Term > rf.currentTerm{
-                  rf.currentTerm = reply.Term
-                  continue;
+                  rf.votedFor = -1
+                  break
                }
             } else{
                numberOfVote++
             }
          }
-//         if numberOfVote >= (totalMember/2){
-//            for i := 0; i < totalMember; i++{
-//               rf.peers[i].currentTerm = rf.currentTerm
-//            }
-//         }
+         if numberOfVote >= availableServer/2 && availableServer != 0{
+            rf.votedFor = rf.me
+            fmt.Printf("server %d becomes the leader\n", rf.me)
+         }
       }
       lastTerm = rf.currentTerm
+      // append progress:
+      lastCommit := rf.commitIndex
+      fmt.Printf("server %d, preCommitIndex is %d\n", rf.me, lastCommit)
+      if rf.votedFor != rf.me{
+         for ;; {
+            span := rand.Intn(150) + 200
+            valid := false
+            for i := 0; i < span; i+=1{
+               time.Sleep(1 * time.Millisecond)
+               if lastCommit != rf.commitIndex{
+                  valid = true
+                  break;
+               }
+            }
+            if !valid{
+               fmt.Printf("server%d no heartbeat!, preCommitIndex is %d\n", rf.me, lastCommit)
+               break;
+            }
+            lastCommit = rf.commitIndex
+         }
+      } else{
+         prevLogIndex := rf.commitIndex
+         rf.commitIndex += 1
+         prevLogTerm := rf.currentTerm-1
+         appendArgs := AppendEntriesArgs{rf.currentTerm, rf.me, prevLogIndex, prevLogTerm, rf.commitIndex}
+         appendReply := AppendEntriesReply{0, false}
+         for ;;{
+            time.Sleep(150 * time.Millisecond)
+            for i:= 0; i < len(rf.peers); i++{
+               if i == rf.me{
+                  continue
+               }
+               rf.peers[i].Call("Raft.AppendEntries", &appendArgs, &appendReply)
+               if rf.peers[rf.me] == nil || !appendReply.Success{
+                  rf.votedFor = -1
+                  fmt.Printf("invalid leader %d\n", rf.me)
+                  break
+               }
+               appendReply.Success = false
+            }
+            if rf.votedFor == -1{
+               break;
+            }
+            prevLogTerm = rf.currentTerm
+            prevLogIndex = rf.commitIndex
+            appendArgs.PrevLogIndex = rf.commitIndex
+            rf.commitIndex += 1
+            appendArgs.PrevLogTerm = prevLogTerm
+            appendArgs.LeaderCommit = rf.commitIndex
+
+         }
+      }
    }
 }
 
@@ -305,7 +386,7 @@ func Make(peers []*labrpc.ClientEnd, me int,
 
 	// Your initialization code here (2A, 2B, 2C).
    rf.currentTerm = 0
-   rf.votedFor = 0
+   rf.votedFor = -1
    rf.commitIndex = 0
    rf.lastApplied = 0
 	// initialize from state persisted before a crash
